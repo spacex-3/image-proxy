@@ -27,25 +27,31 @@ var sensitiveErrorPattern = regexp.MustCompile(`(?i)https?://[^\s<>]+|Bearer\s+\
 var errProxyStorage = errors.New("proxy storage failure")
 
 type proxyService struct {
-	cfg        config
-	store      *taskStore
-	blobs      blobStore
-	loader     *imageLoader
-	httpClient *http.Client
-	logger     *slog.Logger
-	workers    chan struct{}
-	polling    sync.Map
+	cfg          config
+	store        *taskStore
+	blobs        blobStore
+	loader       *imageLoader
+	httpClient   *http.Client
+	resultClient *http.Client
+	logger       *slog.Logger
+	workers      chan struct{}
+	polling      sync.Map
 }
 
 func newProxyService(cfg config, store *taskStore, blobs blobStore, logger *slog.Logger) *proxyService {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	transport.Protocols = protocols
 	return &proxyService{
-		cfg:        cfg,
-		store:      store,
-		blobs:      blobs,
-		loader:     newImageLoader(cfg.MaxImageBytes, cfg.RequestTimeout),
-		httpClient: &http.Client{Timeout: cfg.RequestTimeout},
-		logger:     logger,
-		workers:    make(chan struct{}, cfg.UpstreamWorkers),
+		cfg:          cfg,
+		store:        store,
+		blobs:        blobs,
+		loader:       newImageLoader(cfg.MaxImageBytes, cfg.RequestTimeout),
+		httpClient:   &http.Client{Transport: transport, Timeout: cfg.RequestTimeout},
+		resultClient: &http.Client{Transport: transport, Timeout: cfg.ResultTimeout},
+		logger:       logger,
+		workers:      make(chan struct{}, cfg.UpstreamWorkers),
 	}
 }
 
@@ -371,6 +377,10 @@ func gcd(left, right int) int {
 }
 
 func (s *proxyService) upstreamJSON(ctx context.Context, method, route string, body any) (map[string]any, int, error) {
+	return s.upstreamJSONWithClient(ctx, s.httpClient, method, route, body)
+}
+
+func (s *proxyService) upstreamJSONWithClient(ctx context.Context, client *http.Client, method, route string, body any) (map[string]any, int, error) {
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -388,7 +398,7 @@ func (s *proxyService) upstreamJSON(ctx context.Context, method, route string, b
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	response, err := s.httpClient.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -448,7 +458,7 @@ func (s *proxyService) pollTask(ctx context.Context, task proxyTask) {
 		s.failTask(ctx, task, "task_timeout", "upstream_timeout", "AZ image generation timed out")
 		return
 	}
-	body, statusCode, err := s.upstreamJSON(ctx, http.MethodGet, "/v1/images/tasks/"+url.PathEscape(task.UpstreamID), nil)
+	body, statusCode, err := s.upstreamJSONWithClient(ctx, s.resultClient, http.MethodGet, "/v1/images/tasks/"+url.PathEscape(task.UpstreamID), nil)
 	if err != nil {
 		s.logger.Warn("task poll failed", "task_id", task.ID, "status", statusCode, "error", err)
 		if statusCode >= 400 && statusCode < 500 && statusCode != http.StatusTooManyRequests {

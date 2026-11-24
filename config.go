@@ -25,6 +25,7 @@ type config struct {
 	MaxImageBytes   int64
 	PollInterval    time.Duration
 	RequestTimeout  time.Duration
+	ResultTimeout   time.Duration
 	TaskTimeout     time.Duration
 	TaskRetention   time.Duration
 	UpstreamWorkers int
@@ -42,6 +43,7 @@ func loadConfig() (config, error) {
 		MaxImageBytes:   envInt64("MAX_IMAGE_BYTES", 20<<20),
 		PollInterval:    time.Duration(envInt64("POLL_INTERVAL_SECONDS", 3)) * time.Second,
 		RequestTimeout:  time.Duration(envInt64("REQUEST_TIMEOUT_SECONDS", 60)) * time.Second,
+		ResultTimeout:   time.Duration(envInt64("UPSTREAM_RESULT_TIMEOUT_SECONDS", 240)) * time.Second,
 		TaskTimeout:     time.Duration(envInt64("TASK_TIMEOUT_SECONDS", 60*60)) * time.Second,
 		TaskRetention:   time.Duration(envInt64("TASK_RETENTION_SECONDS", 7*24*60*60)) * time.Second,
 		UpstreamWorkers: int(envInt64("UPSTREAM_WORKERS", 4)),
@@ -79,8 +81,9 @@ func loadConfig() (config, error) {
 		return config{}, errors.New("public media, upstream, and R2 endpoints must use HTTPS")
 	}
 	if cfg.MaxImageBytes <= 0 || cfg.MaxImageBytes > 64<<20 || cfg.UpstreamWorkers < 1 || cfg.UpstreamWorkers > 16 ||
+		cfg.RequestTimeout <= 0 || cfg.ResultTimeout < cfg.RequestTimeout ||
 		cfg.TaskTimeout < time.Minute || cfg.TaskRetention < cfg.TaskTimeout {
-		return config{}, errors.New("invalid image size or worker limit")
+		return config{}, errors.New("invalid image size, timeout, or worker limit")
 	}
 	return cfg, nil
 }
