@@ -39,6 +39,12 @@ type proxyService struct {
 	polling      sync.Map
 }
 
+type upstreamJSONResult struct {
+	body       map[string]any
+	statusCode int
+	err        error
+}
+
 func newProxyService(cfg config, store *taskStore, blobs blobStore, logger *slog.Logger) *proxyService {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	protocols := new(http.Protocols)
@@ -421,6 +427,33 @@ func (s *proxyService) upstreamJSONWithClient(ctx context.Context, client *http.
 	return decoded, response.StatusCode, nil
 }
 
+func (s *proxyService) upstreamResultJSON(ctx context.Context, route string) (map[string]any, int, error) {
+	body, statusCode, err := s.upstreamJSONWithClient(ctx, s.resultClient, http.MethodGet, route, nil)
+	if err == nil || statusCode != http.StatusOK || s.cfg.ResultRaceRequests == 1 {
+		return body, statusCode, err
+	}
+
+	raceCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make(chan upstreamJSONResult, s.cfg.ResultRaceRequests)
+	for range s.cfg.ResultRaceRequests {
+		go func() {
+			body, statusCode, err := s.upstreamJSONWithClient(raceCtx, s.resultClient, http.MethodGet, route, nil)
+			results <- upstreamJSONResult{body: body, statusCode: statusCode, err: err}
+		}()
+	}
+	last := upstreamJSONResult{body: body, statusCode: statusCode, err: err}
+	for range s.cfg.ResultRaceRequests {
+		result := <-results
+		if result.err == nil {
+			cancel()
+			return result.body, result.statusCode, nil
+		}
+		last = result
+	}
+	return last.body, last.statusCode, last.err
+}
+
 func (s *proxyService) run(ctx context.Context) {
 	for _, task := range s.store.submitting() {
 		s.failTask(ctx, task, "proxy_restarted", "proxy_error", "The proxy restarted before submission completed; retry the request")
@@ -460,7 +493,7 @@ func (s *proxyService) pollTask(ctx context.Context, task proxyTask) {
 		s.failTask(ctx, task, "task_timeout", "upstream_timeout", "AZ image generation timed out")
 		return
 	}
-	body, statusCode, err := s.upstreamJSONWithClient(ctx, s.resultClient, http.MethodGet, "/v1/images/tasks/"+url.PathEscape(task.UpstreamID), nil)
+	body, statusCode, err := s.upstreamResultJSON(ctx, "/v1/images/tasks/"+url.PathEscape(task.UpstreamID))
 	if err != nil {
 		s.logger.Warn("task poll failed", "task_id", task.ID, "status", statusCode, "error", err)
 		if statusCode >= 400 && statusCode < 500 && statusCode != http.StatusTooManyRequests {

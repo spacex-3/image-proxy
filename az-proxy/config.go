@@ -10,43 +10,45 @@ import (
 )
 
 type config struct {
-	ListenAddr      string
-	DataPath        string
-	PublicMediaURL  string
-	R2Endpoint      string
-	R2Region        string
-	R2Bucket        string
-	R2AccessKey     string
-	R2SecretKey     string
-	UpstreamBaseURL string
-	UpstreamAPIKey  string
-	ProxyAPIKey     string
-	BarkURL         string
-	MaxImageBytes   int64
-	PollInterval    time.Duration
-	RequestTimeout  time.Duration
-	ResultTimeout   time.Duration
-	TaskTimeout     time.Duration
-	TaskRetention   time.Duration
-	UpstreamWorkers int
+	ListenAddr         string
+	DataPath           string
+	PublicMediaURL     string
+	R2Endpoint         string
+	R2Region           string
+	R2Bucket           string
+	R2AccessKey        string
+	R2SecretKey        string
+	UpstreamBaseURL    string
+	UpstreamAPIKey     string
+	ProxyAPIKey        string
+	BarkURL            string
+	MaxImageBytes      int64
+	PollInterval       time.Duration
+	RequestTimeout     time.Duration
+	ResultTimeout      time.Duration
+	ResultRaceRequests int
+	TaskTimeout        time.Duration
+	TaskRetention      time.Duration
+	UpstreamWorkers    int
 }
 
 func loadConfig() (config, error) {
 	cfg := config{
-		ListenAddr:      envOr("LISTEN_ADDR", ":8080"),
-		DataPath:        envOr("DATA_PATH", "/data/tasks.json"),
-		PublicMediaURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_MEDIA_URL")), "/"),
-		R2Endpoint:      strings.TrimRight(strings.TrimSpace(os.Getenv("R2_ENDPOINT")), "/"),
-		R2Region:        envOr("R2_REGION", "auto"),
-		R2Bucket:        strings.TrimSpace(os.Getenv("R2_BUCKET")),
-		UpstreamBaseURL: strings.TrimRight(envOr("UPSTREAM_BASE_URL", "https://cnmoai.com"), "/"),
-		MaxImageBytes:   envInt64("MAX_IMAGE_BYTES", 20<<20),
-		PollInterval:    time.Duration(envInt64("POLL_INTERVAL_SECONDS", 3)) * time.Second,
-		RequestTimeout:  time.Duration(envInt64("REQUEST_TIMEOUT_SECONDS", 60)) * time.Second,
-		ResultTimeout:   time.Duration(envInt64("UPSTREAM_RESULT_TIMEOUT_SECONDS", 240)) * time.Second,
-		TaskTimeout:     time.Duration(envInt64("TASK_TIMEOUT_SECONDS", 60*60)) * time.Second,
-		TaskRetention:   time.Duration(envInt64("TASK_RETENTION_SECONDS", 7*24*60*60)) * time.Second,
-		UpstreamWorkers: int(envInt64("UPSTREAM_WORKERS", 4)),
+		ListenAddr:         envOr("LISTEN_ADDR", ":8080"),
+		DataPath:           envOr("DATA_PATH", "/data/tasks.json"),
+		PublicMediaURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_MEDIA_URL")), "/"),
+		R2Endpoint:         strings.TrimRight(strings.TrimSpace(os.Getenv("R2_ENDPOINT")), "/"),
+		R2Region:           envOr("R2_REGION", "auto"),
+		R2Bucket:           strings.TrimSpace(os.Getenv("R2_BUCKET")),
+		UpstreamBaseURL:    strings.TrimRight(envOr("UPSTREAM_BASE_URL", "https://cnmoai.com"), "/"),
+		MaxImageBytes:      envInt64("MAX_IMAGE_BYTES", 20<<20),
+		PollInterval:       time.Duration(envInt64("POLL_INTERVAL_SECONDS", 3)) * time.Second,
+		RequestTimeout:     time.Duration(envInt64("REQUEST_TIMEOUT_SECONDS", 60)) * time.Second,
+		ResultTimeout:      time.Duration(envInt64("UPSTREAM_RESULT_TIMEOUT_SECONDS", 240)) * time.Second,
+		ResultRaceRequests: int(envInt64("UPSTREAM_RESULT_RACE_REQUESTS", 3)),
+		TaskTimeout:        time.Duration(envInt64("TASK_TIMEOUT_SECONDS", 60*60)) * time.Second,
+		TaskRetention:      time.Duration(envInt64("TASK_RETENTION_SECONDS", 7*24*60*60)) * time.Second,
+		UpstreamWorkers:    int(envInt64("UPSTREAM_WORKERS", 4)),
 	}
 	var err error
 	if cfg.R2AccessKey, err = readSecret("R2_ACCESS_KEY", "R2_ACCESS_KEY_FILE"); err != nil {
@@ -81,6 +83,7 @@ func loadConfig() (config, error) {
 		return config{}, errors.New("public media, upstream, and R2 endpoints must use HTTPS")
 	}
 	if cfg.MaxImageBytes <= 0 || cfg.MaxImageBytes > 64<<20 || cfg.UpstreamWorkers < 1 || cfg.UpstreamWorkers > 16 ||
+		cfg.ResultRaceRequests < 1 || cfg.ResultRaceRequests > 4 ||
 		cfg.RequestTimeout <= 0 || cfg.ResultTimeout < cfg.RequestTimeout ||
 		cfg.TaskTimeout < time.Minute || cfg.TaskRetention < cfg.TaskTimeout {
 		return config{}, errors.New("invalid image size, timeout, or worker limit")

@@ -1,0 +1,63 @@
+name: Publish AZ proxy image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "az-proxy/**"
+      - ".github/workflows/publish-az-proxy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-az-proxy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: az-proxy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: az-proxy/go.mod
+          cache-dependency-path: az-proxy/go.sum
+      - run: go test ./...
+      - run: go vet ./...
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/spacex-3/image-proxy-az-proxy
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./az-proxy
+          file: ./az-proxy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=az-proxy
+          cache-to: type=gha,mode=max,scope=az-proxy

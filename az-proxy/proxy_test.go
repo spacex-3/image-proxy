@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -64,8 +65,9 @@ func testService(t *testing.T, upstream http.Handler) (*proxyService, *memoryBlo
 	cfg := config{
 		ProxyAPIKey: "proxy-secret", UpstreamAPIKey: "upstream-secret", UpstreamBaseURL: upstreamServer.URL,
 		MaxImageBytes: 1 << 20, PollInterval: time.Second, RequestTimeout: 5 * time.Second,
-		ResultTimeout: 10 * time.Second,
-		TaskTimeout:   time.Hour, TaskRetention: 2 * time.Hour, UpstreamWorkers: 2,
+		ResultTimeout:      10 * time.Second,
+		ResultRaceRequests: 3,
+		TaskTimeout:        time.Hour, TaskRetention: 2 * time.Hour, UpstreamWorkers: 2,
 	}
 	service := newProxyService(cfg, store, blobs, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	server := httptest.NewServer(service.routes())
@@ -197,6 +199,37 @@ func TestTaskPollingUsesResultTimeout(t *testing.T) {
 	updated, ok := service.store.get(task.ID)
 	if !ok || updated.Status != statusCompleted {
 		t.Fatalf("task status = %q, want completed", updated.Status)
+	}
+}
+
+func TestTaskPollingRacesAfterTruncatedResult(t *testing.T) {
+	var calls atomic.Int32
+	service, _, _ := testService(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if calls.Add(1) == 1 {
+			writer.Header().Set("Content-Length", "1000")
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte(`{"status":"completed"`))
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]any{
+			"status": "completed", "result": map[string]any{"data": []any{map[string]any{"b64_json": onePixelPNG}}},
+		})
+	}))
+	task := proxyTask{
+		ID: "azp_abcdefghijklmnopqrstuvwx", UpstreamID: "azimg_truncated", Action: "generations",
+		Model: "gemini-3.1-flash-image-preview", Status: statusProcessing, CreatedAt: time.Now().Unix(),
+	}
+	if err := service.store.put(task); err != nil {
+		t.Fatal(err)
+	}
+
+	service.pollTask(context.Background(), task)
+	updated, ok := service.store.get(task.ID)
+	if !ok || updated.Status != statusCompleted {
+		t.Fatalf("task status = %q, want completed", updated.Status)
+	}
+	if calls.Load() < 2 {
+		t.Fatalf("upstream calls = %d, want a retry race", calls.Load())
 	}
 }
 
