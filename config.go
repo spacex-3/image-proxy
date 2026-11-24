@@ -1,0 +1,116 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type config struct {
+	ListenAddr      string
+	DataPath        string
+	PublicMediaURL  string
+	R2Endpoint      string
+	R2Region        string
+	R2Bucket        string
+	R2AccessKey     string
+	R2SecretKey     string
+	UpstreamBaseURL string
+	UpstreamAPIKey  string
+	ProxyAPIKey     string
+	BarkURL         string
+	MaxImageBytes   int64
+	PollInterval    time.Duration
+	RequestTimeout  time.Duration
+	TaskTimeout     time.Duration
+	TaskRetention   time.Duration
+	UpstreamWorkers int
+}
+
+func loadConfig() (config, error) {
+	cfg := config{
+		ListenAddr:      envOr("LISTEN_ADDR", ":8080"),
+		DataPath:        envOr("DATA_PATH", "/data/tasks.json"),
+		PublicMediaURL:  strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_MEDIA_URL")), "/"),
+		R2Endpoint:      strings.TrimRight(strings.TrimSpace(os.Getenv("R2_ENDPOINT")), "/"),
+		R2Region:        envOr("R2_REGION", "auto"),
+		R2Bucket:        strings.TrimSpace(os.Getenv("R2_BUCKET")),
+		UpstreamBaseURL: strings.TrimRight(envOr("UPSTREAM_BASE_URL", "https://cnmoai.com"), "/"),
+		MaxImageBytes:   envInt64("MAX_IMAGE_BYTES", 20<<20),
+		PollInterval:    time.Duration(envInt64("POLL_INTERVAL_SECONDS", 3)) * time.Second,
+		RequestTimeout:  time.Duration(envInt64("REQUEST_TIMEOUT_SECONDS", 60)) * time.Second,
+		TaskTimeout:     time.Duration(envInt64("TASK_TIMEOUT_SECONDS", 60*60)) * time.Second,
+		TaskRetention:   time.Duration(envInt64("TASK_RETENTION_SECONDS", 7*24*60*60)) * time.Second,
+		UpstreamWorkers: int(envInt64("UPSTREAM_WORKERS", 4)),
+	}
+	var err error
+	if cfg.R2AccessKey, err = readSecret("R2_ACCESS_KEY", "R2_ACCESS_KEY_FILE"); err != nil {
+		return config{}, err
+	}
+	if cfg.R2SecretKey, err = readSecret("R2_SECRET_KEY", "R2_SECRET_KEY_FILE"); err != nil {
+		return config{}, err
+	}
+	if cfg.UpstreamAPIKey, err = readSecret("UPSTREAM_API_KEY", "UPSTREAM_API_KEY_FILE"); err != nil {
+		return config{}, err
+	}
+	if cfg.ProxyAPIKey, err = readSecret("PROXY_API_KEY", "PROXY_API_KEY_FILE"); err != nil {
+		return config{}, err
+	}
+	cfg.BarkURL, _ = readSecret("BARK_URL", "BARK_URL_FILE")
+
+	required := map[string]string{
+		"PUBLIC_MEDIA_URL": cfg.PublicMediaURL,
+		"R2_ENDPOINT":      cfg.R2Endpoint,
+		"R2_BUCKET":        cfg.R2Bucket,
+		"R2_ACCESS_KEY":    cfg.R2AccessKey,
+		"R2_SECRET_KEY":    cfg.R2SecretKey,
+		"UPSTREAM_API_KEY": cfg.UpstreamAPIKey,
+		"PROXY_API_KEY":    cfg.ProxyAPIKey,
+	}
+	for name, value := range required {
+		if value == "" {
+			return config{}, fmt.Errorf("%s is required", name)
+		}
+	}
+	if !strings.HasPrefix(cfg.PublicMediaURL, "https://") || !strings.HasPrefix(cfg.UpstreamBaseURL, "https://") || !strings.HasPrefix(cfg.R2Endpoint, "https://") {
+		return config{}, errors.New("public media, upstream, and R2 endpoints must use HTTPS")
+	}
+	if cfg.MaxImageBytes <= 0 || cfg.MaxImageBytes > 64<<20 || cfg.UpstreamWorkers < 1 || cfg.UpstreamWorkers > 16 ||
+		cfg.TaskTimeout < time.Minute || cfg.TaskRetention < cfg.TaskTimeout {
+		return config{}, errors.New("invalid image size or worker limit")
+	}
+	return cfg, nil
+}
+
+func envOr(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func envInt64(name string, fallback int64) int64 {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func readSecret(valueName, fileName string) (string, error) {
+	if path := strings.TrimSpace(os.Getenv(fileName)); path != "" {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", fileName, err)
+		}
+		return strings.TrimSpace(string(content)), nil
+	}
+	return strings.TrimSpace(os.Getenv(valueName)), nil
+}
