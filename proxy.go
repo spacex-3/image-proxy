@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -43,6 +44,7 @@ func newProxyService(cfg config, store *taskStore, blobs blobStore, logger *slog
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
 	transport.Protocols = protocols
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	return &proxyService{
 		cfg:          cfg,
 		store:        store,

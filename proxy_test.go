@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -162,6 +163,9 @@ func TestUpstreamClientUsesHTTP1(t *testing.T) {
 	}
 	service := newProxyService(cfg, store, newMemoryBlobStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	clientTransport := service.httpClient.Transport.(*http.Transport)
+	if clientTransport.TLSClientConfig.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("TLS minimum version = %d, want TLS 1.2", clientTransport.TLSClientConfig.MinVersion)
+	}
 	clientTransport.TLSClientConfig = upstream.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 
 	if _, _, err = service.upstreamJSON(context.Background(), http.MethodGet, "/status", nil); err != nil {
