@@ -24,6 +24,7 @@ const maxRequestBodyBytes = 32 << 20
 
 var taskIDPattern = regexp.MustCompile(`^azp_[A-Za-z0-9_-]{24}$`)
 var sensitiveErrorPattern = regexp.MustCompile(`(?i)https?://[^\s<>]+|Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}`)
+var errProxyStorage = errors.New("proxy storage failure")
 
 type proxyService struct {
 	cfg        config
@@ -122,6 +123,11 @@ func (s *proxyService) submit(action string) http.HandlerFunc {
 
 		task, upstreamBody, err := s.prepareSubmission(request.Context(), action, body)
 		if err != nil {
+			if errors.Is(err, errProxyStorage) {
+				s.logger.Error("store reference image", "error", err)
+				writeAPIError(writer, http.StatusBadGateway, "proxy_storage_error", "Failed to store reference image")
+				return
+			}
 			writeAPIError(writer, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
@@ -141,8 +147,9 @@ func (s *proxyService) submit(action string) http.HandlerFunc {
 				writeAPIError(writer, http.StatusBadGateway, "upstream_unavailable", "AZ upstream request failed")
 				return
 			}
+			errorCode, errorType, message := upstreamError(upstream, statusCode)
 			writeUpstreamError(writer, statusCode, upstream)
-			if statusCode == http.StatusPaymentRequired || statusCode == http.StatusForbidden || statusCode >= 500 {
+			if statusCode == http.StatusPaymentRequired || statusCode == http.StatusForbidden || statusCode >= 500 || isQuotaError(errorCode, errorType, message) {
 				go s.notify("AZ proxy submission failed", fmt.Sprintf("HTTP %d while submitting %s", statusCode, task.ID))
 			}
 			return
@@ -239,7 +246,7 @@ func (s *proxyService) prepareSubmission(ctx context.Context, action string, bod
 			key := objectKey("inputs", task.ID, index, contentType)
 			if putErr := s.blobs.Put(ctx, key, data, contentType); putErr != nil {
 				_ = s.blobs.Delete(ctx, task.InputKeys...)
-				return proxyTask{}, nil, fmt.Errorf("store reference image: %w", putErr)
+				return proxyTask{}, nil, fmt.Errorf("%w: %v", errProxyStorage, putErr)
 			}
 			task.InputKeys = append(task.InputKeys, key)
 			images = append(images, map[string]string{"image_url": s.blobs.PublicURL(key)})
@@ -627,6 +634,11 @@ func upstreamError(body map[string]any, status int) (string, string, string) {
 
 func publicErrorMessage(message string) string {
 	return sensitiveErrorPattern.ReplaceAllString(strings.TrimSpace(message), "[redacted]")
+}
+
+func isQuotaError(values ...string) bool {
+	combined := strings.ToLower(strings.Join(values, " "))
+	return strings.Contains(combined, "quota") || strings.Contains(combined, "billing") || strings.Contains(combined, "balance") || strings.Contains(combined, "credit")
 }
 
 func writeAPIError(writer http.ResponseWriter, status int, errorType, message string) {

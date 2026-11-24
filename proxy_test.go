@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -244,5 +245,45 @@ func TestDataURLFixtureIsValid(t *testing.T) {
 	}
 	if _, _, err = validateImage(data, "image/png", 1<<20); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestR2StoreIntegration(t *testing.T) {
+	if os.Getenv("AZ_PROXY_R2_INTEGRATION") != "1" {
+		t.Skip("set AZ_PROXY_R2_INTEGRATION=1 to test the deployed R2 bucket")
+	}
+	cfg := config{
+		R2Endpoint: os.Getenv("AZ_PROXY_R2_ENDPOINT"), R2Region: "auto", R2Bucket: os.Getenv("AZ_PROXY_R2_BUCKET"),
+		R2AccessKey: os.Getenv("AZ_PROXY_R2_ACCESS_KEY_ID"), R2SecretKey: os.Getenv("AZ_PROXY_R2_SECRET_ACCESS_KEY"),
+		PublicMediaURL: os.Getenv("AZ_PROXY_R2_PUBLIC_URL"),
+	}
+	store, err := newR2Store(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := base64.StdEncoding.DecodeString(onePixelPNG)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := objectKey("integration", "public-read", 0, "image/png")
+	if err = store.Put(t.Context(), key, data, "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Delete(context.Background(), key) })
+
+	response, err := http.Get(store.PublicURL(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("public R2 status = %d", response.StatusCode)
+	}
+	actual, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(actual, data) {
+		t.Fatal("public R2 bytes differ from uploaded image")
 	}
 }
