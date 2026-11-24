@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ type config struct {
 	R2AccessKey        string
 	R2SecretKey        string
 	UpstreamBaseURL    string
+	UpstreamProxyURL   *url.URL
 	UpstreamAPIKey     string
 	ProxyAPIKey        string
 	BarkURL            string
@@ -51,6 +53,9 @@ func loadConfig() (config, error) {
 		UpstreamWorkers:    int(envInt64("UPSTREAM_WORKERS", 4)),
 	}
 	var err error
+	if cfg.UpstreamProxyURL, err = parseUpstreamProxyURL(os.Getenv("UPSTREAM_PROXY_URL")); err != nil {
+		return config{}, err
+	}
 	if cfg.R2AccessKey, err = readSecret("R2_ACCESS_KEY", "R2_ACCESS_KEY_FILE"); err != nil {
 		return config{}, err
 	}
@@ -89,6 +94,24 @@ func loadConfig() (config, error) {
 		return config{}, errors.New("invalid image size, timeout, or worker limit")
 	}
 	return cfg, nil
+}
+
+func parseUpstreamProxyURL(raw string) (*url.URL, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return nil, errors.New("UPSTREAM_PROXY_URL must be a proxy URL without credentials, path, query, or fragment")
+	}
+	switch parsed.Scheme {
+	case "http", "https", "socks5":
+	default:
+		return nil, errors.New("UPSTREAM_PROXY_URL must use HTTP, HTTPS, or SOCKS5")
+	}
+	parsed.Path = ""
+	return parsed, nil
 }
 
 func envOr(name, fallback string) string {

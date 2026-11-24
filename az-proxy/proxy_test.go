@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,6 +184,51 @@ func TestUpstreamClientsUseExpectedProtocols(t *testing.T) {
 	}
 	if actual := <-protocol; actual != "HTTP/2.0" {
 		t.Fatalf("fallback protocol = %s, want HTTP/2.0", actual)
+	}
+}
+
+func TestUpstreamProxyDoesNotAffectReferenceDownloads(t *testing.T) {
+	proxyURL, err := url.Parse("http://az-egress:7890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openTaskStore(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newProxyService(config{
+		UpstreamProxyURL: proxyURL, RequestTimeout: time.Second, ResultTimeout: time.Second,
+		MaxImageBytes: 1 << 20, UpstreamWorkers: 1,
+	}, store, newMemoryBlobStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := &http.Request{URL: &url.URL{Scheme: "https", Host: "upstream.example"}}
+	for name, client := range map[string]*http.Client{
+		"submit": service.httpClient, "result": service.resultClient, "result fallback": service.resultFallbackClient,
+	} {
+		transport := client.Transport.(*http.Transport)
+		actual, proxyErr := transport.Proxy(request)
+		if proxyErr != nil {
+			t.Fatalf("%s proxy: %v", name, proxyErr)
+		}
+		if actual.String() != proxyURL.String() {
+			t.Fatalf("%s proxy = %q, want %q", name, actual, proxyURL)
+		}
+	}
+	if service.loader.client.Transport.(*http.Transport).Proxy != nil {
+		t.Fatal("reference image loader must remain direct")
+	}
+}
+
+func TestParseUpstreamProxyURL(t *testing.T) {
+	for _, raw := range []string{"http://proxy:7890", "https://proxy:7890", "socks5://proxy:1080"} {
+		parsed, err := parseUpstreamProxyURL(raw)
+		if err != nil || parsed.String() != raw {
+			t.Fatalf("parse %q = %v, %v", raw, parsed, err)
+		}
+	}
+	for _, raw := range []string{"ftp://proxy:21", "http://user:pass@proxy:7890", "http://proxy:7890/path", "http://proxy:7890?x=1"} {
+		if _, err := parseUpstreamProxyURL(raw); err == nil {
+			t.Fatalf("parse %q succeeded, want error", raw)
+		}
 	}
 }
 

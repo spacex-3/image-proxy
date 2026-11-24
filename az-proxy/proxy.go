@@ -52,12 +52,18 @@ func newProxyService(cfg config, store *taskStore, blobs blobStore, logger *slog
 	http1Protocols.SetHTTP1(true)
 	http1Transport.Protocols = http1Protocols
 	http1Transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.UpstreamProxyURL != nil {
+		http1Transport.Proxy = http.ProxyURL(cfg.UpstreamProxyURL)
+	}
 	http2Transport := http.DefaultTransport.(*http.Transport).Clone()
 	http2Protocols := new(http.Protocols)
 	http2Protocols.SetHTTP1(true)
 	http2Protocols.SetHTTP2(true)
 	http2Transport.Protocols = http2Protocols
 	http2Transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	if cfg.UpstreamProxyURL != nil {
+		http2Transport.Proxy = http.ProxyURL(cfg.UpstreamProxyURL)
+	}
 	return &proxyService{
 		cfg:                  cfg,
 		store:                store,
