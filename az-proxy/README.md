@@ -10,4 +10,4 @@ POST /v1/images/edits/async
 GET  /v1/images/tasks/{task_id}
 ```
 
-The service also retains the existing generation/edit aliases used by the AZ task plugin. Runtime settings are supplied through environment variables. Large completed results use `UPSTREAM_RESULT_TIMEOUT_SECONDS` and, after an HTTP 200 response is truncated, up to `UPSTREAM_RESULT_RACE_REQUESTS` concurrent recovery reads.
+The service also retains the existing generation/edit aliases used by the AZ task plugin. Runtime settings are supplied through environment variables. Large completed results use `UPSTREAM_RESULT_TIMEOUT_SECONDS` and, after an HTTP 200 response is truncated, up to `UPSTREAM_RESULT_RACE_REQUESTS` concurrent HTTP/1.1 and HTTP/2 recovery reads.

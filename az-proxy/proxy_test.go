@@ -145,8 +145,8 @@ func TestEditConvertsBase64ReferenceAndResultToPublicURLs(t *testing.T) {
 	}
 }
 
-func TestUpstreamClientUsesHTTP1(t *testing.T) {
-	protocol := make(chan string, 1)
+func TestUpstreamClientsUseExpectedProtocols(t *testing.T) {
+	protocol := make(chan string, 2)
 	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		protocol <- request.Proto
 		writeJSON(writer, http.StatusOK, map[string]any{"status": "processing"})
@@ -169,12 +169,20 @@ func TestUpstreamClientUsesHTTP1(t *testing.T) {
 		t.Fatalf("TLS minimum version = %d, want TLS 1.2", clientTransport.TLSClientConfig.MinVersion)
 	}
 	clientTransport.TLSClientConfig = upstream.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	fallbackTransport := service.resultFallbackClient.Transport.(*http.Transport)
+	fallbackTransport.TLSClientConfig = upstream.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 
 	if _, _, err = service.upstreamJSON(context.Background(), http.MethodGet, "/status", nil); err != nil {
 		t.Fatal(err)
 	}
 	if actual := <-protocol; actual != "HTTP/1.1" {
 		t.Fatalf("protocol = %s, want HTTP/1.1", actual)
+	}
+	if _, _, err = service.upstreamJSONWithClient(context.Background(), service.resultFallbackClient, http.MethodGet, "/status", nil); err != nil {
+		t.Fatal(err)
+	}
+	if actual := <-protocol; actual != "HTTP/2.0" {
+		t.Fatalf("fallback protocol = %s, want HTTP/2.0", actual)
 	}
 }
 
@@ -187,6 +195,7 @@ func TestTaskPollingUsesResultTimeout(t *testing.T) {
 	}))
 	service.httpClient.Timeout = 10 * time.Millisecond
 	service.resultClient.Timeout = time.Second
+	service.resultFallbackClient.Timeout = time.Second
 	task := proxyTask{
 		ID: "azp_123456789012345678901234", UpstreamID: "azimg_slow", Action: "generations",
 		Model: "gemini-3.1-flash-image-preview", Status: statusProcessing, CreatedAt: time.Now().Unix(),

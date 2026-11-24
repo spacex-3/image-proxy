@@ -28,15 +28,16 @@ var sensitiveErrorPattern = regexp.MustCompile(`(?i)https?://[^\s<>]+|Bearer\s+\
 var errProxyStorage = errors.New("proxy storage failure")
 
 type proxyService struct {
-	cfg          config
-	store        *taskStore
-	blobs        blobStore
-	loader       *imageLoader
-	httpClient   *http.Client
-	resultClient *http.Client
-	logger       *slog.Logger
-	workers      chan struct{}
-	polling      sync.Map
+	cfg                  config
+	store                *taskStore
+	blobs                blobStore
+	loader               *imageLoader
+	httpClient           *http.Client
+	resultClient         *http.Client
+	resultFallbackClient *http.Client
+	logger               *slog.Logger
+	workers              chan struct{}
+	polling              sync.Map
 }
 
 type upstreamJSONResult struct {
@@ -46,20 +47,27 @@ type upstreamJSONResult struct {
 }
 
 func newProxyService(cfg config, store *taskStore, blobs blobStore, logger *slog.Logger) *proxyService {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	protocols := new(http.Protocols)
-	protocols.SetHTTP1(true)
-	transport.Protocols = protocols
-	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	http1Transport := http.DefaultTransport.(*http.Transport).Clone()
+	http1Protocols := new(http.Protocols)
+	http1Protocols.SetHTTP1(true)
+	http1Transport.Protocols = http1Protocols
+	http1Transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	http2Transport := http.DefaultTransport.(*http.Transport).Clone()
+	http2Protocols := new(http.Protocols)
+	http2Protocols.SetHTTP1(true)
+	http2Protocols.SetHTTP2(true)
+	http2Transport.Protocols = http2Protocols
+	http2Transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	return &proxyService{
-		cfg:          cfg,
-		store:        store,
-		blobs:        blobs,
-		loader:       newImageLoader(cfg.MaxImageBytes, cfg.RequestTimeout),
-		httpClient:   &http.Client{Transport: transport, Timeout: cfg.RequestTimeout},
-		resultClient: &http.Client{Transport: transport, Timeout: cfg.ResultTimeout},
-		logger:       logger,
-		workers:      make(chan struct{}, cfg.UpstreamWorkers),
+		cfg:                  cfg,
+		store:                store,
+		blobs:                blobs,
+		loader:               newImageLoader(cfg.MaxImageBytes, cfg.RequestTimeout),
+		httpClient:           &http.Client{Transport: http1Transport, Timeout: cfg.RequestTimeout},
+		resultClient:         &http.Client{Transport: http1Transport, Timeout: cfg.ResultTimeout},
+		resultFallbackClient: &http.Client{Transport: http2Transport, Timeout: cfg.ResultTimeout},
+		logger:               logger,
+		workers:              make(chan struct{}, cfg.UpstreamWorkers),
 	}
 }
 
@@ -436,9 +444,13 @@ func (s *proxyService) upstreamResultJSON(ctx context.Context, route string) (ma
 	raceCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	results := make(chan upstreamJSONResult, s.cfg.ResultRaceRequests)
-	for range s.cfg.ResultRaceRequests {
+	for attempt := range s.cfg.ResultRaceRequests {
 		go func() {
-			body, statusCode, err := s.upstreamJSONWithClient(raceCtx, s.resultClient, http.MethodGet, route, nil)
+			client := s.resultClient
+			if attempt%2 == 0 {
+				client = s.resultFallbackClient
+			}
+			body, statusCode, err := s.upstreamJSONWithClient(raceCtx, client, http.MethodGet, route, nil)
 			results <- upstreamJSONResult{body: body, statusCode: statusCode, err: err}
 		}()
 	}
