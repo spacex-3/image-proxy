@@ -68,7 +68,7 @@ func newProxyService(cfg config, store *taskStore, blobs blobStore, logger *slog
 		cfg:                  cfg,
 		store:                store,
 		blobs:                blobs,
-		loader:               newImageLoader(cfg.MaxImageBytes, cfg.RequestTimeout),
+		loader:               newImageLoader(cfg.MaxImageBytes, cfg.RequestTimeout, cfg.ReferenceProxyURL),
 		httpClient:           &http.Client{Transport: http1Transport, Timeout: cfg.RequestTimeout},
 		resultClient:         &http.Client{Transport: http1Transport, Timeout: cfg.ResultTimeout},
 		resultFallbackClient: &http.Client{Transport: http2Transport, Timeout: cfg.ResultTimeout},

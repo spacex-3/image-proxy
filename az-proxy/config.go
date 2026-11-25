@@ -21,6 +21,7 @@ type config struct {
 	R2SecretKey        string
 	UpstreamBaseURL    string
 	UpstreamProxyURL   *url.URL
+	ReferenceProxyURL  *url.URL
 	UpstreamAPIKey     string
 	ProxyAPIKey        string
 	BarkURL            string
@@ -53,7 +54,10 @@ func loadConfig() (config, error) {
 		UpstreamWorkers:    int(envInt64("UPSTREAM_WORKERS", 4)),
 	}
 	var err error
-	if cfg.UpstreamProxyURL, err = parseUpstreamProxyURL(os.Getenv("UPSTREAM_PROXY_URL")); err != nil {
+	if cfg.UpstreamProxyURL, err = parseProxyURL("UPSTREAM_PROXY_URL", os.Getenv("UPSTREAM_PROXY_URL")); err != nil {
+		return config{}, err
+	}
+	if cfg.ReferenceProxyURL, err = parseProxyURL("REFERENCE_PROXY_URL", os.Getenv("REFERENCE_PROXY_URL")); err != nil {
 		return config{}, err
 	}
 	if cfg.R2AccessKey, err = readSecret("R2_ACCESS_KEY", "R2_ACCESS_KEY_FILE"); err != nil {
@@ -96,19 +100,19 @@ func loadConfig() (config, error) {
 	return cfg, nil
 }
 
-func parseUpstreamProxyURL(raw string) (*url.URL, error) {
+func parseProxyURL(name, raw string) (*url.URL, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-		return nil, errors.New("UPSTREAM_PROXY_URL must be a proxy URL without credentials, path, query, or fragment")
+		return nil, fmt.Errorf("%s must be a proxy URL without credentials, path, query, or fragment", name)
 	}
 	switch parsed.Scheme {
 	case "http", "https", "socks5":
 	default:
-		return nil, errors.New("UPSTREAM_PROXY_URL must use HTTP, HTTPS, or SOCKS5")
+		return nil, fmt.Errorf("%s must use HTTP, HTTPS, or SOCKS5", name)
 	}
 	parsed.Path = ""
 	return parsed, nil

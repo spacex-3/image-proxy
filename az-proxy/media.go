@@ -89,33 +89,33 @@ func (s *r2Store) PublicURL(key string) string {
 }
 
 type imageLoader struct {
-	client   *http.Client
-	maxBytes int64
+	client          *http.Client
+	maxBytes        int64
+	validateTargets bool
 }
 
-func newImageLoader(maxBytes int64, timeout time.Duration) *imageLoader {
+func newImageLoader(maxBytes int64, timeout time.Duration, proxyURL *url.URL) *imageLoader {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil {
-			return nil, err
-		}
-		addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil || len(addresses) == 0 {
-			return nil, errors.New("reference image host did not resolve")
-		}
-		for _, address := range addresses {
-			if !isPublicIP(address.IP) {
-				continue
+	if proxyURL == nil {
+		transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				return nil, err
 			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(address.IP.String(), port))
+			addresses, err := resolvePublicReferenceHost(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
 		}
-		return nil, errors.New("reference image host is not public")
+	} else {
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	return &imageLoader{
-		maxBytes: maxBytes,
+	loader := &imageLoader{
+		maxBytes:        maxBytes,
+		validateTargets: proxyURL != nil,
 		client: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
@@ -126,10 +126,16 @@ func newImageLoader(maxBytes int64, timeout time.Duration) *imageLoader {
 				if request.URL.User != nil || request.URL.Fragment != "" || (via[0].URL.Scheme == "https" && request.URL.Scheme != "https") {
 					return errors.New("unsafe reference image redirect")
 				}
+				if proxyURL != nil {
+					if _, err := resolvePublicReferenceHost(request.Context(), request.URL.Hostname()); err != nil {
+						return err
+					}
+				}
 				return nil
 			},
 		},
 	}
+	return loader
 }
 
 func (l *imageLoader) Load(ctx context.Context, reference string) ([]byte, string, error) {
@@ -140,6 +146,11 @@ func (l *imageLoader) Load(ctx context.Context, reference string) ([]byte, strin
 	parsed, err := url.Parse(reference)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return nil, "", errors.New("reference image must be an HTTP(S) URL or image data URL")
+	}
+	if l.validateTargets {
+		if _, err = resolvePublicReferenceHost(ctx, parsed.Hostname()); err != nil {
+			return nil, "", err
+		}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {
@@ -159,6 +170,23 @@ func (l *imageLoader) Load(ctx context.Context, reference string) ([]byte, strin
 		return nil, "", err
 	}
 	return validateImage(data, response.Header.Get("Content-Type"), l.maxBytes)
+}
+
+func resolvePublicReferenceHost(ctx context.Context, host string) ([]net.IP, error) {
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil || len(addresses) == 0 {
+		return nil, errors.New("reference image host did not resolve")
+	}
+	public := make([]net.IP, 0, len(addresses))
+	for _, address := range addresses {
+		if isPublicIP(address.IP) {
+			public = append(public, address.IP)
+		}
+	}
+	if len(public) == 0 {
+		return nil, errors.New("reference image host is not public")
+	}
+	return public, nil
 }
 
 func decodeDataURL(value string, maxBytes int64) ([]byte, string, error) {

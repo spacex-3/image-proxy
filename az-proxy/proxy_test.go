@@ -218,15 +218,49 @@ func TestUpstreamProxyDoesNotAffectReferenceDownloads(t *testing.T) {
 	}
 }
 
-func TestParseUpstreamProxyURL(t *testing.T) {
+func TestReferenceProxyIsIsolatedFromUpstreamClients(t *testing.T) {
+	proxyURL, err := url.Parse("http://az-egress:7890")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := openTaskStore(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := newProxyService(config{
+		ReferenceProxyURL: proxyURL, RequestTimeout: time.Second, ResultTimeout: time.Second,
+		MaxImageBytes: 1 << 20, UpstreamWorkers: 1,
+	}, store, newMemoryBlobStore(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	request := &http.Request{URL: &url.URL{Scheme: "https", Host: "example.com"}}
+	actual, proxyErr := service.loader.client.Transport.(*http.Transport).Proxy(request)
+	if proxyErr != nil || actual.String() != proxyURL.String() {
+		t.Fatalf("reference proxy = %v, %v", actual, proxyErr)
+	}
+	for name, client := range map[string]*http.Client{
+		"submit": service.httpClient, "result": service.resultClient, "result fallback": service.resultFallbackClient,
+	} {
+		upstreamProxy, upstreamErr := client.Transport.(*http.Transport).Proxy(request)
+		if upstreamErr != nil {
+			t.Fatalf("%s proxy: %v", name, upstreamErr)
+		}
+		if upstreamProxy != nil && upstreamProxy.String() == proxyURL.String() {
+			t.Fatalf("%s unexpectedly uses the reference proxy", name)
+		}
+	}
+	if _, _, err = service.loader.Load(context.Background(), "http://127.0.0.1/image.png"); err == nil || !strings.Contains(err.Error(), "not public") {
+		t.Fatalf("private reference error = %v", err)
+	}
+}
+
+func TestParseProxyURL(t *testing.T) {
 	for _, raw := range []string{"http://proxy:7890", "https://proxy:7890", "socks5://proxy:1080"} {
-		parsed, err := parseUpstreamProxyURL(raw)
+		parsed, err := parseProxyURL("REFERENCE_PROXY_URL", raw)
 		if err != nil || parsed.String() != raw {
 			t.Fatalf("parse %q = %v, %v", raw, parsed, err)
 		}
 	}
 	for _, raw := range []string{"ftp://proxy:21", "http://user:pass@proxy:7890", "http://proxy:7890/path", "http://proxy:7890?x=1"} {
-		if _, err := parseUpstreamProxyURL(raw); err == nil {
+		if _, err := parseProxyURL("REFERENCE_PROXY_URL", raw); err == nil {
 			t.Fatalf("parse %q succeeded, want error", raw)
 		}
 	}
