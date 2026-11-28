@@ -149,7 +149,11 @@ func (s *proxyService) submit(action string) http.HandlerFunc {
 			return
 		}
 
-		task, upstreamBody, err := s.prepareSubmission(request.Context(), action, body)
+		// Bound preparation as a whole, including multiple reference downloads
+		// and optional uploads, independently from the upstream POST budget.
+		prepareCtx, cancelPrepare := context.WithTimeout(request.Context(), s.cfg.RequestTimeout)
+		task, upstreamBody, err := s.prepareSubmission(prepareCtx, action, body)
+		cancelPrepare()
 		if err != nil {
 			if errors.Is(err, errProxyStorage) {
 				s.logger.Error("store reference image", "error", err)

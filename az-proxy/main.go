@@ -34,7 +34,10 @@ func main() {
 	server := &http.Server{
 		Addr: cfg.ListenAddr, Handler: service.routes(),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 70 * time.Second,
-		WriteTimeout: 70 * time.Second, IdleTimeout: 60 * time.Second,
+		// Reading the body, preparing references and submitting upstream have
+		// separate budgets. Do not discard an accepted task's response after
+		// the old fixed 70s deadline: callers may retry and generate twice.
+		WriteTimeout: 85*time.Second + 2*cfg.RequestTimeout, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 32 << 10,
 	}
 	go service.run(ctx)

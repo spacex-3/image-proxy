@@ -585,3 +585,29 @@ func TestInlineHTTPSReferencePreservesImageAndStoresOnlyOutput(t *testing.T) {
 	assert.Contains(t, response.Body.String(), "24 MiB")
 	assert.Equal(t, int32(1), posts.Load(), "oversized request must not reach the upstream")
 }
+
+func TestReferencePreparationDeadlineDoesNotSubmitGeneration(t *testing.T) {
+	var posts atomic.Int32
+	service, _, server := testService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		writeJSON(w, http.StatusAccepted, map[string]any{"task_id": "must-not-submit"})
+	}))
+	release := make(chan struct{})
+	worker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer worker.Close()
+	defer close(release)
+	service.cfg.RequestTimeout = 30 * time.Millisecond
+	// This client has no timeout: the overall preparation context must stop it.
+	service.loader.worker = &referenceWorker{endpoint: worker.URL, key: strings.Repeat("test-only-", 5), client: worker.Client()}
+	payload := map[string]any{"model": "gemini-3.1-flash-image-preview", "prompt": "edit", "images": []any{map[string]any{"image_url": "https://images.example/ref.png"}}}
+	response := authenticatedJSON(t, http.MethodPost, server.URL+"/v1/images/edits/async", payload)
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Equal(t, int32(0), posts.Load(), "reference timeout must not start billable generation")
+	assert.Empty(t, service.store.submitting())
+}
