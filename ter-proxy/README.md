@@ -50,3 +50,7 @@ Task metadata records queue, reference preparation, upstream headers/body, outpu
 Bearer authentication uses constant-time digest comparison and applies to every submit/query route. Only `/healthz` is public. Deploy on the private Docker network behind new-api, which owns customer authentication and TLS. Upstream redirects are not followed; reference downloads reject private addresses, credentials and HTTPS downgrades. Error logs redact configured secrets and URL paths. Security references: OWASP ASVS 5.0 authentication/access controls, Authentication Cheat Sheet and Session Management Cheat Sheet. This is not a claim of full ASVS certification.
 
 Validation: `go test ./...`, `go vet ./...`, `node --test plugin.test.mjs`.
+
+## Cloudflare reference downloads
+
+Set `REFERENCE_FETCH_URL` and `REFERENCE_FETCH_KEY` (or its `_FILE` variant) together to use the independent `../reference-worker/` for HTTPS references. Worker mode bypasses VMess for reference downloads only, streams binary images and preserves the existing upstream image format and R2 flow. It takes precedence over `REFERENCE_PROXY_URL`; Base64 input is unchanged. No new-api plugin or core update is required.

@@ -89,6 +89,7 @@ func (s *r2Store) PublicURL(key string) string {
 }
 
 type imageLoader struct {
+	worker          *referenceWorker
 	client          *http.Client
 	maxBytes        int64
 	validateTargets bool
@@ -142,6 +143,9 @@ func (l *imageLoader) Load(ctx context.Context, reference string) ([]byte, strin
 	reference = strings.TrimSpace(reference)
 	if strings.HasPrefix(reference, "data:") {
 		return decodeDataURL(reference, l.maxBytes)
+	}
+	if l.worker != nil {
+		return l.worker.load(ctx, reference, l.maxBytes)
 	}
 	parsed, err := url.Parse(reference)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {

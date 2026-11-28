@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -391,4 +394,61 @@ func TestReferenceProxyIsIndependentOfGeneratedImageDownloads(t *testing.T) {
 	_, _, err = s.loader.Load(context.Background(), "http://127.0.0.1/private.png")
 	assert.Error(t, err)
 	assert.Equal(t, int32(1), proxyCalls.Load(), "private references must be rejected before the proxy")
+}
+
+func TestReferenceWorkerAuthenticationIsolationAndLimits(t *testing.T) {
+	const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9e8AAAAASUVORK5CYII="
+	data, err := base64.StdEncoding.DecodeString(png)
+	require.NoError(t, err)
+	secret := strings.Repeat("test-key-", 8)
+	var calls atomic.Int32
+	worker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		mac := hmac.New(sha256.New, []byte(secret))
+		_, _ = mac.Write([]byte(r.Header.Get("X-Reference-Timestamp") + "\n"))
+		_, _ = mac.Write(body)
+		assert.Equal(t, hex.EncodeToString(mac.Sum(nil)), r.Header.Get("X-Reference-Signature"))
+		assert.Equal(t, `{"url":"https://images.example/ref.png"}`, string(body))
+		assert.Empty(t, r.Header.Get("Authorization"))
+		assert.Empty(t, r.Header.Get("x-goog-api-key"))
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "https://elsewhere.example/", 302)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(data)
+	}))
+	defer worker.Close()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("Worker must bypass reference proxy") }))
+	defer proxy.Close()
+	proxyURL, err := url.Parse(proxy.URL)
+	require.NoError(t, err)
+	loader := newReferenceLoader(1<<20, time.Second, proxyURL, worker.URL+"/v1/reference", secret)
+	// Trust only this test server while preserving the production transport/proxy policy.
+	transport := loader.worker.client.Transport.(*http.Transport)
+	transport.TLSClientConfig = worker.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	got, mime, err := loader.Load(context.Background(), "https://images.example/ref.png")
+	require.NoError(t, err)
+	assert.Equal(t, data, got)
+	assert.Equal(t, "image/png", mime)
+	_, _, err = loader.Load(context.Background(), "data:image/png;base64,"+png)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), calls.Load(), "Base64 must bypass Worker")
+	for _, u := range []string{"http://images.example/ref.png", "https://user:pass@images.example/ref.png"} {
+		_, _, err = loader.Load(context.Background(), u)
+		assert.Error(t, err)
+	}
+	loader.worker.endpoint = worker.URL + "/redirect"
+	_, _, err = loader.Load(context.Background(), "https://images.example/ref.png")
+	assert.ErrorContains(t, err, "HTTP 302")
+	loader.worker.endpoint = worker.URL + "/v1/reference"
+	loader.maxBytes = 4
+	_, _, err = loader.Load(context.Background(), "https://images.example/ref.png")
+	assert.Error(t, err)
+	assert.NoError(t, validateReferenceWorker("", ""))
+	assert.Error(t, validateReferenceWorker("https://worker.example/v1/reference", "short"))
+	assert.Error(t, validateReferenceWorker("http://worker.example/v1/reference", secret))
+	assert.NoError(t, validateReferenceWorker("https://worker.example/v1/reference", secret))
 }

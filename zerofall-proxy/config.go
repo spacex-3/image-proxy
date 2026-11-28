@@ -10,6 +10,7 @@ import (
 )
 
 type config struct {
+	ReferenceFetchURL, ReferenceFetchKey                     string
 	ListenAddr, DataPath, PublicMediaURL                     string
 	R2Endpoint, R2Region, R2Bucket, R2AccessKey, R2SecretKey string
 	UpstreamBaseURL, UpstreamAPIKey, ProxyAPIKey, BarkURL    string
@@ -22,6 +23,7 @@ type config struct {
 func loadConfig() (config, error) {
 	c := config{ListenAddr: ":8080", DataPath: "/data", R2Region: "auto", UpstreamBaseURL: "https://llm.zerofall.top", MaxImageBytes: 20 << 20, RequestTimeout: 120 * time.Second, TaskTimeout: 15 * time.Minute, TaskRetention: 7 * 24 * time.Hour, Workers: 2, QueueLimit: 16}
 	for name, target := range map[string]*string{
+		"REFERENCE_FETCH_URL": &c.ReferenceFetchURL, "REFERENCE_FETCH_KEY": &c.ReferenceFetchKey,
 		"LISTEN_ADDR": &c.ListenAddr, "DATA_PATH": &c.DataPath, "PUBLIC_MEDIA_URL": &c.PublicMediaURL,
 		"R2_ENDPOINT": &c.R2Endpoint, "R2_REGION": &c.R2Region, "R2_BUCKET": &c.R2Bucket,
 		"R2_ACCESS_KEY": &c.R2AccessKey, "R2_SECRET_KEY": &c.R2SecretKey,
@@ -76,6 +78,9 @@ func loadConfig() (config, error) {
 	}
 	if c.TaskTimeout > time.Hour || c.TaskRetention < c.TaskTimeout || c.RequestTimeout > c.TaskTimeout {
 		return c, errors.New("invalid timeout or retention")
+	}
+	if err := validateReferenceWorker(c.ReferenceFetchURL, c.ReferenceFetchKey); err != nil {
+		return c, err
 	}
 	c.PublicMediaURL = strings.TrimRight(c.PublicMediaURL, "/")
 	c.UpstreamBaseURL = strings.TrimSuffix(strings.TrimRight(c.UpstreamBaseURL, "/"), "/v1")

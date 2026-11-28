@@ -1,0 +1,9 @@
+name = "image-reference-fetcher"
+main = "worker.mjs"
+compatibility_date = "2026-11-28"
+compatibility_flags = ["global_fetch_strictly_public"]
+workers_dev = true
+
+# Store REFERENCE_FETCH_KEY with `wrangler secret put`; never commit its value.
+[observability]
+enabled = false

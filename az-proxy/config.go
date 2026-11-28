@@ -11,28 +11,29 @@ import (
 )
 
 type config struct {
-	ListenAddr         string
-	DataPath           string
-	PublicMediaURL     string
-	R2Endpoint         string
-	R2Region           string
-	R2Bucket           string
-	R2AccessKey        string
-	R2SecretKey        string
-	UpstreamBaseURL    string
-	UpstreamProxyURL   *url.URL
-	ReferenceProxyURL  *url.URL
-	UpstreamAPIKey     string
-	ProxyAPIKey        string
-	BarkURL            string
-	MaxImageBytes      int64
-	PollInterval       time.Duration
-	RequestTimeout     time.Duration
-	ResultTimeout      time.Duration
-	ResultRaceRequests int
-	TaskTimeout        time.Duration
-	TaskRetention      time.Duration
-	UpstreamWorkers    int
+	ReferenceFetchURL, ReferenceFetchKey string
+	ListenAddr                           string
+	DataPath                             string
+	PublicMediaURL                       string
+	R2Endpoint                           string
+	R2Region                             string
+	R2Bucket                             string
+	R2AccessKey                          string
+	R2SecretKey                          string
+	UpstreamBaseURL                      string
+	UpstreamProxyURL                     *url.URL
+	ReferenceProxyURL                    *url.URL
+	UpstreamAPIKey                       string
+	ProxyAPIKey                          string
+	BarkURL                              string
+	MaxImageBytes                        int64
+	PollInterval                         time.Duration
+	RequestTimeout                       time.Duration
+	ResultTimeout                        time.Duration
+	ResultRaceRequests                   int
+	TaskTimeout                          time.Duration
+	TaskRetention                        time.Duration
+	UpstreamWorkers                      int
 }
 
 func loadConfig() (config, error) {
@@ -73,6 +74,13 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 	cfg.BarkURL, _ = readSecret("BARK_URL", "BARK_URL_FILE")
+	cfg.ReferenceFetchURL = strings.TrimSpace(os.Getenv("REFERENCE_FETCH_URL"))
+	if cfg.ReferenceFetchKey, err = readSecret("REFERENCE_FETCH_KEY", "REFERENCE_FETCH_KEY_FILE"); err != nil {
+		return config{}, err
+	}
+	if err = validateReferenceWorker(cfg.ReferenceFetchURL, cfg.ReferenceFetchKey); err != nil {
+		return config{}, err
+	}
 
 	required := map[string]string{
 		"PUBLIC_MEDIA_URL": cfg.PublicMediaURL,

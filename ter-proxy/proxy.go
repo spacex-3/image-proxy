@@ -45,7 +45,7 @@ func newProxyService(c config, store *taskStore, blobs blobStore, logger *slog.L
 	if c.UpstreamProxyURL != nil {
 		t.Proxy = http.ProxyURL(c.UpstreamProxyURL)
 	}
-	return &proxyService{cfg: c, store: store, blobs: blobs, loader: newImageLoader(c.MaxImageBytes, c.RequestTimeout, c.ReferenceProxyURL), outputLoader: newImageLoader(c.MaxImageBytes, c.RequestTimeout, c.UpstreamProxyURL), client: &http.Client{Transport: t, Timeout: c.TaskTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, logger: logger, wake: make(chan struct{}, 1), workers: make(chan struct{}, c.Workers)}
+	return &proxyService{cfg: c, store: store, blobs: blobs, loader: newReferenceLoader(c.MaxImageBytes, c.RequestTimeout, c.ReferenceProxyURL, c.ReferenceFetchURL, c.ReferenceFetchKey), outputLoader: newImageLoader(c.MaxImageBytes, c.RequestTimeout, c.UpstreamProxyURL), client: &http.Client{Transport: t, Timeout: c.TaskTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, logger: logger, wake: make(chan struct{}, 1), workers: make(chan struct{}, c.Workers)}
 }
 
 func (s *proxyService) routes() http.Handler {
