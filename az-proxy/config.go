@@ -12,6 +12,7 @@ import (
 
 type config struct {
 	ReferenceFetchURL, ReferenceFetchKey string
+	ReferenceFormat                      string
 	ListenAddr                           string
 	DataPath                             string
 	PublicMediaURL                       string
@@ -38,6 +39,7 @@ type config struct {
 
 func loadConfig() (config, error) {
 	cfg := config{
+		ReferenceFormat:    strings.ToLower(envOr("UPSTREAM_REFERENCE_FORMAT", "url")),
 		ListenAddr:         envOr("LISTEN_ADDR", ":8080"),
 		DataPath:           envOr("DATA_PATH", "/data/tasks.json"),
 		PublicMediaURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_MEDIA_URL")), "/"),
@@ -104,6 +106,9 @@ func loadConfig() (config, error) {
 		cfg.RequestTimeout <= 0 || cfg.ResultTimeout < cfg.RequestTimeout ||
 		cfg.TaskTimeout < time.Minute || cfg.TaskRetention < cfg.TaskTimeout {
 		return config{}, errors.New("invalid image size, timeout, or worker limit")
+	}
+	if cfg.ReferenceFormat != "url" && cfg.ReferenceFormat != "base64" {
+		return config{}, errors.New("UPSTREAM_REFERENCE_FORMAT must be url or base64")
 	}
 	return cfg, nil
 }

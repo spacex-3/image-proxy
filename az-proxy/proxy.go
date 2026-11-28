@@ -265,11 +265,21 @@ func (s *proxyService) prepareSubmission(ctx context.Context, action string, bod
 	}
 	if len(references) > 0 {
 		images := make([]map[string]string, 0, len(references))
+		inlineBytes := 0
 		for index, reference := range references {
 			data, contentType, loadErr := s.loader.Load(ctx, reference)
 			if loadErr != nil {
 				_ = s.blobs.Delete(ctx, task.InputKeys...)
 				return proxyTask{}, nil, loadErr
+			}
+			if s.cfg.ReferenceFormat == "base64" {
+				encodedBytes := base64.StdEncoding.EncodedLen(len(data))
+				if encodedBytes > (24<<20)-inlineBytes {
+					return proxyTask{}, nil, errors.New("AZ reference request exceeds 24 MiB after Base64 encoding; reduce reference size or count")
+				}
+				inlineBytes += encodedBytes
+				images = append(images, map[string]string{"image_url": "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(data)})
+				continue
 			}
 			key := objectKey("inputs", task.ID, index, contentType)
 			if putErr := s.blobs.Put(ctx, key, data, contentType); putErr != nil {
@@ -280,6 +290,17 @@ func (s *proxyService) prepareSubmission(ctx context.Context, action string, bod
 			images = append(images, map[string]string{"image_url": s.blobs.PublicURL(key)})
 		}
 		upstream["images"] = images
+		if s.cfg.ReferenceFormat == "base64" {
+			encoded, encodeErr := json.Marshal(upstream)
+			if encodeErr != nil {
+				return proxyTask{}, nil, encodeErr
+			}
+			// AZ's 24 MiB request limit includes Base64 expansion and JSON.
+			// Reject before a generation POST; never resubmit through another format.
+			if len(encoded) > 24<<20 {
+				return proxyTask{}, nil, errors.New("AZ reference request exceeds 24 MiB after Base64 encoding; reduce reference size or count")
+			}
+		}
 	}
 	return task, upstream, nil
 }

@@ -539,3 +539,49 @@ func TestReferenceWorkerAuthenticationIsolationAndLimits(t *testing.T) {
 	assert.Error(t, validateReferenceWorker("http://worker.example/v1/reference", secret))
 	assert.NoError(t, validateReferenceWorker("https://worker.example/v1/reference", secret))
 }
+
+func TestInlineHTTPSReferencePreservesImageAndStoresOnlyOutput(t *testing.T) {
+	data, err := base64.StdEncoding.DecodeString(onePixelPNG)
+	require.NoError(t, err)
+	worker := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("X-Reference-Content-Length", fmt.Sprint(len(data)))
+		_, _ = w.Write(data)
+	}))
+	defer worker.Close()
+	var submitted map[string]any
+	var posts atomic.Int32
+	service, blobs, server := testService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&submitted))
+			writeJSON(w, http.StatusAccepted, map[string]any{"task_id": "azimg_inline"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "completed", "result": map[string]any{"data": []any{map[string]any{"b64_json": onePixelPNG}}}})
+	}))
+	service.cfg.ReferenceFormat = "base64"
+	service.loader.worker = &referenceWorker{endpoint: worker.URL, key: strings.Repeat("test-only-", 5), client: worker.Client()}
+	payload := map[string]any{"model": "gemini-3.1-flash-image-preview", "prompt": "edit", "size": "1024x1024", "images": []any{map[string]any{"image_url": "https://images.example/ref.png"}}}
+	response := authenticatedJSON(t, http.MethodPost, server.URL+"/v1/images/edits/async", payload)
+	require.Equal(t, http.StatusAccepted, response.Code, response.Body.String())
+	assert.Equal(t, "data:image/png;base64,"+onePixelPNG, submitted["images"].([]any)[0].(map[string]any)["image_url"])
+	assert.Empty(t, blobs.objects, "inline inputs must not be uploaded to R2")
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+	task, ok := service.store.get(result["task_id"].(string))
+	require.True(t, ok)
+	assert.Empty(t, task.InputKeys)
+	service.pollTask(context.Background(), task)
+	task, ok = service.store.get(task.ID)
+	require.True(t, ok)
+	assert.Equal(t, statusCompleted, task.Status)
+	require.Len(t, task.Outputs, 1)
+	assert.Contains(t, task.Outputs[0].URL, "/az-proxy/outputs/")
+	assert.Len(t, blobs.objects, 1)
+	payload["prompt"] = strings.Repeat("x", 24<<20)
+	response = authenticatedJSON(t, http.MethodPost, server.URL+"/v1/images/edits/async", payload)
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.Contains(t, response.Body.String(), "24 MiB")
+	assert.Equal(t, int32(1), posts.Load(), "oversized request must not reach the upstream")
+}
