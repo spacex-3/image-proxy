@@ -27,15 +27,16 @@ var taskIDPattern = regexp.MustCompile(`^zero_[A-Za-z0-9_-]{24}$`)
 var sensitiveErrorPattern = regexp.MustCompile(`(?i)https?://[^\s<>]+|Bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}`)
 
 type proxyService struct {
-	cfg     config
-	store   *taskStore
-	blobs   blobStore
-	loader  *imageLoader
-	client  *http.Client
-	logger  *slog.Logger
-	wake    chan struct{}
-	active  sync.Map
-	workers chan struct{}
+	cfg          config
+	store        *taskStore
+	blobs        blobStore
+	loader       *imageLoader
+	outputLoader *imageLoader
+	client       *http.Client
+	logger       *slog.Logger
+	wake         chan struct{}
+	active       sync.Map
+	workers      chan struct{}
 }
 
 func newProxyService(c config, store *taskStore, blobs blobStore, logger *slog.Logger) *proxyService {
@@ -44,7 +45,7 @@ func newProxyService(c config, store *taskStore, blobs blobStore, logger *slog.L
 	if c.UpstreamProxyURL != nil {
 		t.Proxy = http.ProxyURL(c.UpstreamProxyURL)
 	}
-	return &proxyService{cfg: c, store: store, blobs: blobs, loader: newImageLoader(c.MaxImageBytes, c.RequestTimeout, c.ReferenceProxyURL), client: &http.Client{Transport: t, Timeout: c.TaskTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, logger: logger, wake: make(chan struct{}, 1), workers: make(chan struct{}, c.Workers)}
+	return &proxyService{cfg: c, store: store, blobs: blobs, loader: newImageLoader(c.MaxImageBytes, c.RequestTimeout, c.ReferenceProxyURL), outputLoader: newImageLoader(c.MaxImageBytes, c.RequestTimeout, c.UpstreamProxyURL), client: &http.Client{Transport: t, Timeout: c.TaskTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, logger: logger, wake: make(chan struct{}, 1), workers: make(chan struct{}, c.Workers)}
 }
 
 func (s *proxyService) routes() http.Handler {

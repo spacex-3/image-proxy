@@ -1,0 +1,12 @@
+# Optional: reuse the existing AZ egress for reference downloads.
+# docker compose -f compose.yaml -f compose.az-egress.yaml up -d --no-build
+services:
+  zerofall-proxy:
+    networks:
+      - newapi_vip
+      - az_egress
+
+networks:
+  az_egress:
+    external: true
+    name: newapi-vip_az_egress

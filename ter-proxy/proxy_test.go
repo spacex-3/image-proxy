@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -229,7 +231,7 @@ func TestURLResultAndUpstreamRedirectBoundary(t *testing.T) {
 		writeJSON(w, 200, map[string]any{"data": map[string]string{"url": media.URL + "/image", "revised_prompt": "not an extra image"}})
 	})
 	// Test-only loopback image server; production uses the SSRF-safe loader.
-	s.loader = &imageLoader{client: media.Client(), maxBytes: 20 << 20}
+	s.outputLoader = &imageLoader{client: media.Client(), maxBytes: 20 << 20}
 	job := submitTest(t, s, server, "/v1/images/generations", map[string]any{"model": "gemini-3.1-flash-image", "prompt": "circle"})
 	s.process(context.Background(), job)
 	got, _ := s.store.get(job.ID)
@@ -246,4 +248,50 @@ func TestURLResultAndUpstreamRedirectBoundary(t *testing.T) {
 	got, _ = redirect.store.get(job.ID)
 	assert.Equal(t, "failed", got.Status)
 	assert.Equal(t, int32(1), downloaded.Load(), "the authenticated POST must not follow redirects")
+}
+
+// A reference-only proxy must never carry generated images or the upstream key.
+func TestReferenceProxyIsIndependentOfGeneratedImageDownloads(t *testing.T) {
+	image, err := base64.StdEncoding.DecodeString(testPNG)
+	require.NoError(t, err)
+	var proxyCalls, outputCalls atomic.Int32
+	refProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyCalls.Add(1)
+		assert.Equal(t, "http://8.8.8.8/reference.png", r.URL.String())
+		assert.Empty(t, r.Header.Get("Authorization"))
+		assert.Empty(t, r.Header.Get("x-goog-api-key"))
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(image)
+	}))
+	defer refProxy.Close()
+	output := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		outputCalls.Add(1)
+		assert.Empty(t, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(image)
+	}))
+	defer output.Close()
+	s, _ := fixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected generation") })
+	proxyURL, err := url.Parse(refProxy.URL)
+	require.NoError(t, err)
+	c := s.cfg
+	c.ReferenceProxyURL = proxyURL
+	s = newProxyService(c, s.store, s.blobs, s.logger)
+	// Override only the direct output dial target for a loopback fixture.
+	transport := s.outputLoader.client.Transport.(*http.Transport)
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, strings.TrimPrefix(output.URL, "http://"))
+	}
+	got, mime, err := s.loader.Load(context.Background(), "http://8.8.8.8/reference.png")
+	require.NoError(t, err)
+	assert.Equal(t, image, got)
+	assert.Equal(t, "image/png", mime)
+	got, _, err = s.outputLoader.Load(context.Background(), "http://8.8.4.4/output.png")
+	require.NoError(t, err)
+	assert.Equal(t, image, got)
+	assert.Equal(t, int32(1), proxyCalls.Load())
+	assert.Equal(t, int32(1), outputCalls.Load())
+	_, _, err = s.loader.Load(context.Background(), "http://127.0.0.1/private.png")
+	assert.Error(t, err)
+	assert.Equal(t, int32(1), proxyCalls.Load(), "private references must be rejected before the proxy")
 }

@@ -67,7 +67,7 @@ func (s *proxyService) downloadGeneratedImage(ctx context.Context, rawURL string
 		return nil, "", errors.New("Invalid upstream URL")
 	}
 	if u.Scheme != base.Scheme || !strings.EqualFold(u.Host, base.Host) || !authenticatedImagePath.MatchString(u.Path) || u.RawPath != "" {
-		return s.loader.Load(ctx, rawURL)
+		return s.outputLoader.Load(ctx, rawURL)
 	}
 	q, err := url.ParseQuery(u.RawQuery)
 	if err != nil || len(q) != 1 || len(q["index"]) != 1 || q.Get("index") != "0" {
@@ -110,7 +110,7 @@ func (s *proxyService) readCachedImage(ctx context.Context, rawURL string) ([]by
 		if err != nil || dest.Scheme != "https" || dest.User != nil || dest.Fragment != "" {
 			return nil, "", false, errors.New("Unsafe output redirect")
 		}
-		image, mime, err := s.loader.Load(ctx, dest.String())
+		image, mime, err := s.outputLoader.Load(ctx, dest.String())
 		return image, mime, false, err
 	}
 	if resp.StatusCode != http.StatusOK {

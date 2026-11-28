@@ -46,7 +46,8 @@ Configure outside the repository in a mode-0600 `zerofall-proxy.env`:
 - `PROXY_API_KEY`: an independent randomly generated key of at least 32 characters; use it as the new type-61 channel key with Base URL `http://zerofall-proxy:8080`.
 - `PUBLIC_MEDIA_URL`, `R2_ENDPOINT`, `R2_BUCKET`, `R2_ACCESS_KEY`, `R2_SECRET_KEY`; optional `R2_REGION` (default `auto`). The dedicated object prefix is `zerofall-proxy/`.
 - Optional `BARK_URL`: notify on terminal failures, including quota codes and processing stage. Never include it in public configuration.
-- Optional `UPSTREAM_PROXY_URL`, `REFERENCE_PROXY_URL`: independent proxy settings, default direct.
+- Optional `REFERENCE_PROXY_URL`: customer reference downloads only, default direct. `UPSTREAM_PROXY_URL` controls Gemini requests and generated-image downloads independently, default direct.
+- To reuse an existing proxy, attach only this service to its external Docker network and configure its internal URL in the private env file. For the AZ egress deployment, apply `compose.az-egress.yaml` alongside `compose.yaml` and set `REFERENCE_PROXY_URL=http://az-egress:7890`. Keep the existing proxy and other providers unchanged.
 - `UPSTREAM_WORKERS` (default 2), `QUEUE_LIMIT` (default 16 active plus queued tasks), `REFERENCE_TIMEOUT_SECONDS` (120), `TASK_TIMEOUT_SECONDS` (900), `TASK_RETENTION_SECONDS` (604800).
 - Secret variables also support `_FILE` paths. Never put upstream or storage credentials in the plugin.
 
