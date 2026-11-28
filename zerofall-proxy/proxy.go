@@ -250,6 +250,8 @@ func (s *proxyService) process(parent context.Context, t task) {
 	}
 	request.Header.Set("x-goog-api-key", s.cfg.UpstreamAPIKey)
 	request.Header.Set("X-Image-Response", "url")
+	// Match the user agent used by successful native Gemini probes.
+	request.Header.Set("User-Agent", "Mozilla/5.0")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	start = time.Now()

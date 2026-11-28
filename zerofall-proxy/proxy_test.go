@@ -89,6 +89,7 @@ func TestAsyncSubmissionAndImageSettlement(t *testing.T) {
 		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		assert.Equal(t, "upstream-secret-do-not-log", r.Header.Get("x-goog-api-key"))
 		assert.Equal(t, "url", r.Header.Get("X-Image-Response"))
+		assert.Equal(t, "Mozilla/5.0", r.Header.Get("User-Agent"))
 		assert.Empty(t, r.Header.Get("Authorization"))
 		assert.Equal(t, map[string]any{"imageSize": "2K", "aspectRatio": "1:1"}, body["generationConfig"].(map[string]any)["imageConfig"])
 		assert.NotContains(t, body, "async")
