@@ -25,6 +25,21 @@ test('signed request streams image bytes without forwarding secrets or cookies',
   assert.deepEqual([...new Uint8Array(await result.arrayBuffer())], [1, 2, 3]);
   assert.equal(calls, 1);
 });
+test('preserve explicit HTTPS ports on initial targets and redirects', async () => {
+  const visited = [];
+  const r = await handle(request('https://images.example:8888/reference.png'), env, async (url) => {
+    visited.push(url);
+    if (visited.length === 1) return new Response(null, { status: 302, headers: { Location: 'https://cdn.example:8443/reference.png' } });
+    return new Response(new Uint8Array([1]), { headers: { 'Content-Type': 'image/png' } });
+  }, () => now);
+  assert.equal(r.status, 200);
+  assert.deepEqual(visited, ['https://images.example:8888/reference.png', 'https://cdn.example:8443/reference.png']);
+  await r.arrayBuffer();
+  for (const url of ['https://127.0.0.1:8888/a', 'https://a.internal:8888/a', 'https://worker.example:8888/a']) {
+    const denied = await handle(request(url), env, () => { throw new Error('must not fetch'); }, () => now);
+    assert.equal(denied.status, 400);
+  }
+});
 test('expired, forged and tampered requests never fetch', async () => {
   for (const options of [{ offset: -61 }, { offset: 61 }, { key: 'wrong' }, { tamper: true }]) {
     const result = await handle(request('https://images.example/a', options), env, () => { throw new Error('must not fetch'); }, () => now);

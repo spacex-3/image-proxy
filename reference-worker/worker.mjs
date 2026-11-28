@@ -14,7 +14,7 @@ function targetURL(value, selfHost) {
   // Public HTTPS DNS names only. The deployed Worker also uses
   // global_fetch_strictly_public, has no private-network/service bindings,
   // and revalidates every redirect. Credentials are never forwarded.
-  if (u.protocol !== 'https:' || u.username || u.password || u.hash || (u.port && u.port !== '443') ||
+  if (u.protocol !== 'https:' || u.username || u.password || u.hash ||
       !host.includes('.') || host.endsWith('.') || host.includes(':') || /^[0-9.]+$/.test(host) ||
       /(^|\.)(localhost|local|internal|invalid|test)$/.test(host) || host === selfHost) {
     throw new Error('invalid_reference_url');
