@@ -1,6 +1,6 @@
 const MAX_BODY = 16 * 1024;
 const MAX_IMAGE = 20 * 1024 * 1024;
-const TIMEOUT_MS = 45_000;
+const TIMEOUT_MS = 90_000;
 const TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const utf8 = new TextEncoder();
 
@@ -83,15 +83,24 @@ export async function handle(request, env, fetcher = fetch, now = Date.now) {
     const mime = (response.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
     if (!TYPES.has(mime)) throw new Error('unsupported_image_type');
     if (Number(response.headers.get('Content-Length')) > MAX_IMAGE) throw new Error('image_too_large');
+    // Fetch may decode a compressed response, so its wire length is usable only
+    // for identity encoding. Preserve it outside Content-Length because edge
+    // streaming can otherwise hide a short body behind a normal EOF.
+    const lengthHeader = response.headers.get('Content-Length');
+    const encoding = (response.headers.get('Content-Encoding') || 'identity').toLowerCase();
+    const expected = encoding === 'identity' && /^\d+$/.test(lengthHeader || '') ? Number(lengthHeader) : null;
+    const headers = { 'Content-Type': mime, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+    if (expected !== null) headers['X-Reference-Content-Length'] = String(expected);
     const reader = response.body.getReader();
     let bytes = 0;
     const stream = new ReadableStream({
       async pull(controller) {
         try {
           const { done, value } = await reader.read();
+          if (abort.signal.aborted || (done && expected !== null && bytes !== expected)) throw new Error('incomplete_image');
           if (done) { clearTimeout(timer); controller.close(); return; }
           bytes += value.byteLength;
-          if (bytes > MAX_IMAGE) throw new Error('image_too_large');
+          if (bytes > MAX_IMAGE || (expected !== null && bytes > expected)) throw new Error('image_too_large');
           controller.enqueue(value);
         } catch {
           clearTimeout(timer); abort.abort(); await reader.cancel().catch(() => {});
@@ -100,7 +109,7 @@ export async function handle(request, env, fetcher = fetch, now = Date.now) {
       },
       async cancel() { clearTimeout(timer); abort.abort(); await reader.cancel().catch(() => {}); },
     });
-    return new Response(stream, { headers: { 'Content-Type': mime, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+    return new Response(stream, { headers });
   } catch (e) {
     clearTimeout(timer); abort.abort(); await response?.body?.cancel().catch(() => {});
     const code = ['invalid_redirect', 'unsupported_image_type', 'image_too_large'].includes(e.message) ? e.message : 'reference_fetch_failed';

@@ -64,3 +64,14 @@ test('reject non-images and oversized responses, including unknown-length stream
   const r = await handle(request('https://images.example/a'), env, async () => new Response(new Uint8Array(20 * 1024 * 1024 + 1), { headers: { 'Content-Type': 'image/png' } }), () => now);
   await assert.rejects(r.arrayBuffer());
 });
+
+test('preserve source length and reject a clean but truncated source stream', async () => {
+  const complete = await handle(request('https://images.example/a'), env, async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png', 'Content-Length': '3' } }), () => now);
+  assert.equal(complete.headers.get('X-Reference-Content-Length'), '3');
+  assert.deepEqual([...new Uint8Array(await complete.arrayBuffer())], [1, 2, 3]);
+  const short = await handle(request('https://images.example/a'), env, async () => new Response(new Uint8Array([1, 2]), { headers: { 'Content-Type': 'image/png', 'Content-Length': '3' } }), () => now);
+  await assert.rejects(short.arrayBuffer());
+  const decoded = await handle(request('https://images.example/a'), env, async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png', 'Content-Length': '1', 'Content-Encoding': 'gzip' } }), () => now);
+  assert.equal(decoded.headers.get('X-Reference-Content-Length'), null);
+  assert.equal((await decoded.arrayBuffer()).byteLength, 3);
+});

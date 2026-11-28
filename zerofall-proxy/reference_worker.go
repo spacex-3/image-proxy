@@ -78,5 +78,11 @@ func (w *referenceWorker) load(ctx context.Context, reference string, maxBytes i
 	if err != nil {
 		return nil, "", errors.New("reference download worker returned an incomplete image")
 	}
+	if expected := resp.Header.Get("X-Reference-Content-Length"); expected != "" {
+		length, parseErr := strconv.ParseInt(expected, 10, 64)
+		if parseErr != nil || length <= 0 || length > maxBytes || int64(len(data)) != length {
+			return nil, "", errors.New("reference download worker returned an incomplete image")
+		}
+	}
 	return validateImage(data, strings.TrimSpace(resp.Header.Get("Content-Type")), maxBytes)
 }

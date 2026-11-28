@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -418,6 +419,11 @@ func TestReferenceWorkerAuthenticationIsolationAndLimits(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("X-Reference-Content-Length", fmt.Sprint(len(data)))
+		if r.URL.Path == "/short" {
+			_, _ = w.Write(data[:len(data)-8]) // Valid PNG header, clean HTTP EOF, incomplete image.
+			return
+		}
 		_, _ = w.Write(data)
 	}))
 	defer worker.Close()
@@ -440,6 +446,9 @@ func TestReferenceWorkerAuthenticationIsolationAndLimits(t *testing.T) {
 		_, _, err = loader.Load(context.Background(), u)
 		assert.Error(t, err)
 	}
+	loader.worker.endpoint = worker.URL + "/short"
+	_, _, err = loader.Load(context.Background(), "https://images.example/ref.png")
+	assert.ErrorContains(t, err, "incomplete image")
 	loader.worker.endpoint = worker.URL + "/redirect"
 	_, _, err = loader.Load(context.Background(), "https://images.example/ref.png")
 	assert.ErrorContains(t, err, "HTTP 302")
