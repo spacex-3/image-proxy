@@ -8,6 +8,8 @@ Independent image relay services and compatibility sources.
 - `cangyuan/`: image-only Cangyuan task plugin snapshot. It is source-only and is not included in the AZ image.
 - `ter-proxy/`: independent Terrakinc synchronous-to-asynchronous image relay and `ter` task plugin, with its own image and workflow.
 
+- `zerofall-proxy/`: independent ZeroFall Gemini-to-asynchronous image relay and `zerofall` task plugin, with its own image and workflow.
+
 Future providers must use a separate top-level directory, build context, image name, and workflow path filter. Changes for one provider must not alter another provider's request handling or release artifact.
 
 ## AZ image

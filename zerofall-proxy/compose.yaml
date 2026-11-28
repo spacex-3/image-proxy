@@ -1,0 +1,32 @@
+services:
+  zerofall-proxy:
+    image: ghcr.io/spacex-3/image-proxy-zerofall-proxy:latest
+    container_name: zerofall-proxy
+    restart: unless-stopped
+    env_file: ./zerofall-proxy.env
+    volumes:
+      - zerofall_proxy_data:/data
+    networks:
+      - newapi_vip
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  zerofall_proxy_data:
+
+networks:
+  newapi_vip:
+    external: true
+    name: newapi-vip_default
